@@ -1,0 +1,261 @@
+#Question 1 : Support Vector Machine and Perceptron
+import Oracle_Assignment_2
+from Oracle_Assignment_2 import q1_get_cifar100_train_test
+import numpy as np
+data1 = q1_get_cifar100_train_test(23647)
+
+train_data1 = data1[0]
+test_data1 = data1[1]
+
+X_train1 = []
+Y_train1 = []
+for dpt in train_data1:
+    X_train1.append(dpt[0])
+    Y_train1.append(dpt[1])
+X_train1 = np.array(X_train1)
+Y_train1 = np.array(Y_train1)
+
+print(X_train1.shape)
+print(Y_train1.shape)
+
+# %%
+def p_alg(X, y, max_iter, w, b):
+    mistake_list = []
+    for iter in range(max_iter):
+        mistakes= 0 
+        for i in range(X.shape[0]):
+            if y[i]*(np.dot(w,X[i])+b) <= 0:
+                w = w + y[i]*X[i]
+                b = b + y[i]
+                mistakes += 1
+
+        for i in range(len(X)):
+            if y[i]*(np.dot(w, X[i])+b) <= 0:
+                mistakes += 1
+        if mistakes == 0:
+            print("Converged at iteration: ", iter)
+            break
+        mistake_rate = mistakes/(X.shape[0])
+        mistake_list.append(mistake_rate)
+
+    return w, b, mistake_list
+
+w = np.zeros(X_train1.shape[1])
+b = 0
+max_iter = 100000
+# print(w.shape)
+w, b, mistake_list = p_alg(X_train1, Y_train1, max_iter, w, b)
+
+# %%
+
+import matplotlib.pyplot as plt
+plt.xlabel('Iterations')
+plt.ylabel('Misclassification Rate')
+plt.title('Misclass_rate vs Iterations')
+
+plt.plot(mistake_list)
+
+
+# %%
+import numpy as np
+import cvxopt
+from cvxopt import matrix
+from cvxopt.solvers import qp
+import time
+
+def primal(X, y, C=1):
+    n_sam, n_fea = X.shape
+
+    P = np.zeros((n_fea + 1 + n_sam, n_fea + 1 + n_sam))
+    P[:n_fea, :n_fea] = np.eye(n_fea)
+    P = cvxopt.matrix(P)
+
+    q = np.hstack([np.zeros(n_fea + 1), C * np.ones(n_sam)])
+    q = cvxopt.matrix(q)
+
+    G = np.zeros((2 * n_sam, n_fea + 1 + n_sam))
+    for i in range(n_sam):
+        G[i, :n_fea] = -y[i] * X[i]  
+        G[i, n_fea] = -y[i]        
+        G[i, n_fea + 1 + i] = -1     
+        G[n_sam + i, n_fea + 1 + i] = -1  
+    G = cvxopt.matrix(G)
+
+    h = np.hstack([-np.ones(n_sam), np.zeros(n_sam)])
+    h = cvxopt.matrix(h)
+    cvxopt.solvers.options['show_progress'] = False
+    start_time = time.time()
+
+    sol = qp(P, q, G, h)
+    
+    end_time = time.time()
+    print("Time taken for primal:", end_time - start_time)
+    w = np.array(sol['x'][:n_fea]).flatten()
+    b = np.array(sol['x'][n_fea]).flatten()
+    slack_var = np.array(sol['x'][n_fea + 1:]).flatten()
+
+    return w, b, slack_var
+
+
+# %%
+w_primal, b_primal, slack_var_primal = primal(X_train1, Y_train1, C=1)
+count = 0
+non_sep_idx_primal=[]
+for i in range(len(slack_var_primal)):
+    if slack_var_primal[i] > 1:
+        count += 1
+        non_sep_idx_primal.append(i)
+print(count)
+print("Non-sep indices:", non_sep_idx_primal)
+print("w_primal:", w_primal)
+print("b_primal:", b_primal)
+
+
+
+# %%
+
+
+# %%
+X_train_primal = [data for i, data in enumerate(X_train1) if i not in non_sep_idx_primal]
+Y_train_primal = [label for i, label in enumerate(Y_train1) if i not in non_sep_idx_primal]
+X_train_primal = np.array(X_train_primal)
+Y_train_primal = np.array(Y_train_primal)
+print(X_train_primal.shape)
+print(Y_train_primal.shape)
+
+# %%
+w_primal = np.zeros(X_train_primal.shape[1])
+print(w_primal.shape)
+b_primal = 0
+max_iter = 1000000
+w_primal, b_primal, mistake_list_primal = p_alg(X_train_primal, Y_train_primal, max_iter, w_primal, b_primal)
+plt.xlabel('Iterations')
+plt.ylabel('Misclassification Rate')
+plt.title('Misclass_rate vs Iterations after removing non-separable points')
+plt.plot(mistake_list_primal)
+
+# %%
+def dual(X, y, K,C=1):
+    n_sam, n_fea = X.shape
+
+    P = np.outer(y, y) * K
+    P = cvxopt.matrix(P)
+
+    q = -np.ones(n_sam)
+    q = cvxopt.matrix(q)
+
+    G = np.vstack((-np.eye(n_sam), np.eye(n_sam)))
+    G = cvxopt.matrix(G)
+
+    h = np.hstack((np.zeros(n_sam), C * np.ones(n_sam)))
+    h = cvxopt.matrix(h)
+
+    A = y.astype(float).reshape(1, -1)
+    A = cvxopt.matrix(A)
+    
+    b = cvxopt.matrix(0.0)
+    cvxopt.solvers.options['show_progress'] = False
+    start_time = time.time()
+    sol = qp(P, q, G, h, A, b)
+    end_time = time.time()
+    print("Time taken for dual:", end_time - start_time)
+
+    alpha = np.array(sol['x']).flatten()
+
+    w = np.sum(alpha[:, None] * y[:, None] * X, axis=0)
+
+    support_vector_indices = np.where((alpha > 0) & (alpha < C))[0]
+    b_values = []
+    for i in support_vector_indices:
+        b_values.append(y[i] - np.sum(alpha * y * K[i, :]))
+    b = np.mean(b_values) if b_values else 0
+
+
+    return w, b, alpha
+
+w_d, b_d, alpha_d = dual(X_train1, Y_train1, np.dot(X_train1, X_train1.T))
+print("Weights_dual:", w_d)
+print("Bias_dual:", b_d)
+print("Alpha_dual:", alpha_d)
+
+non_sep_idx_dual = [i for i in range(len(Y_train1)) if Y_train1[i] * (np.dot(w_d, X_train1[i]) + b_d) <= 0]
+misclass_rate_dual = len(non_sep_idx_dual) / len(Y_train1)
+print("Misclassification Rate_dual:", misclass_rate_dual)
+print("Non-separable indices_dual:", non_sep_idx_dual)
+print("Number of Non-separable Indices_dual:", len(non_sep_idx_dual))
+
+
+C = 1
+support_vec_idx = [i for i in range(len(alpha_d)) if 1e-5 < alpha_d[i] < C]
+
+
+print("Support Vector Indices:", support_vec_idx)
+print("Number of Support Vectors:", len(support_vec_idx))
+
+
+
+# %%
+non_sep_idx_primal = np.array(non_sep_idx_primal)
+np.savetxt("inseperable_23647.csv", non_sep_idx_primal, delimiter=",")
+
+# %%
+def gaussian_kernel(X1, X2, gamma):
+    n1, n2 = X1.shape[0], X2.shape[0]
+    K = np.zeros((n1, n2))
+    for i in range(n1):
+        for j in range(n2):
+            diff = X1[i] - X2[j]
+            K[i, j] = np.exp(-gamma * np.dot(diff, diff))
+    return K
+
+# %%
+def predict(X_train, X_test, Y_train, alpha, b, gamma):
+    """Predict labels for X_test using trained Kernel SVM."""
+    K_test = gaussian_kernel(X_test, X_train, gamma)
+    y_pred = np.sign(np.dot(K_test, alpha * Y_train) + b)
+    return y_pred
+
+# %%
+found_optimal = False
+C_list = [0.01, 0.1, 1, 10, 100]
+gamma_list = [0.01, 0.1, 1, 10, 50, 100]
+
+for C in C_list:
+    for gamma in gamma_list:
+        K = gaussian_kernel(X_train1, X_train1, gamma)
+        w, b, alpha = dual(X_train1, Y_train1, K, C)
+        
+        support_vec_idx = np.where((alpha > 1e-5) & (alpha < C))[0]
+
+        X_train1_sv = X_train1[support_vec_idx]
+        Y_train1_sv = Y_train1[support_vec_idx]
+        alpha_sv = alpha[support_vec_idx]
+    
+        y_pred_full = np.zeros(X_train1.shape[0])
+        for i in range(X_train1.shape[0]):
+            kernel_values = np.exp(-gamma * np.linalg.norm(X_train1_sv - X_train1[i], axis=1) ** 2)
+            y_pred_full[i] = np.sum(alpha_sv * Y_train1_sv * kernel_values) + b
+        y_pred_full = np.sign(y_pred_full)
+
+        misclassifications = np.sum(y_pred_full != Y_train1)
+
+        if misclassifications == 0:
+            gamma_opt = gamma
+            C_opt = C
+            print("Optimal C:", C_opt)
+            print("Optimal Gamma:", gamma_opt) 
+            found_optimal = True
+            break 
+
+    if found_optimal:
+        break 
+print("Misclassification_rate:", misclassifications/X_train1.shape[0])
+
+K = gaussian_kernel(X_train1, X_train1, gamma_opt)
+w, b, alpha = dual(X_train1, Y_train1, K, C_opt)
+support_vec_idx = np.where((alpha > 1e-5) & (alpha < C_opt))[0]
+print("Number of Support Vectors:", len(support_vec_idx))
+print("Support Vector Indices:", support_vec_idx)
+print("Weights_gd:", w)
+print("Bias_gd:", b)
+print("Alpha_gd:", alpha)
